@@ -24,7 +24,7 @@ def load_csv(uploaded_file):
 
 def convert_df_to_csv(df):
     """DataFrameをCSV形式のバイトデータに変換する"""
-    return df.to_csv(index=False).encode('utf-8')
+    return df.to_csv(index=False).encode('utf-8-sig') # <--- ここを変更
 
 # --- セッションステートの初期化 ---
 if 'df_processed' not in st.session_state:
