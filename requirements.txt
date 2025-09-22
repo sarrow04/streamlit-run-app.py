@@ -2,3 +2,6 @@ streamlit
 pandas
 numpy
 plotly
+seaborn
+scipy
+matplotlib
