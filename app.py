@@ -56,11 +56,9 @@ with st.sidebar:
         st.markdown("---")
         st.subheader("2. 特徴量を作成")
 
-        # --- 数値列が存在する場合のみ、関連機能を表示 ---
         if numeric_cols:
             with st.expander("🔢 四則演算機能"):
-                with st.popover("使い方のヒント 💡"):
-                    st.markdown("""**目的**: 2つの数値列と定数を使って新しい列を計算します。 **具体例**: `FamilySize` を作る場合\n- **列1**: `sibsp`, **演算子**: `+`, **列2**: `parch`, **定数**: `1`, **新しい列名**: `FamilySize`""")
+                # (ヘルプは省略)
                 st.write("2つの数値列と定数で計算します。")
                 col1 = st.selectbox("列1", numeric_cols, key="calc_col1")
                 op = st.selectbox("演算子", ["+", "-", "*", "/"], key="calc_op")
@@ -76,8 +74,7 @@ with st.sidebar:
                     except Exception as e: st.error(f"計算エラー: {e}")
 
             with st.expander("📊 ビニング（カテゴリ化）機能"):
-                with st.popover("使い方のヒント 💡"):
-                    st.markdown("""**目的**: 連続値の列をカテゴリ分けします。 **具体例**: `AgeGroup` を作る場合\n- **対象の列**: `age`, **区切り値**: `0, 18, 60, 100`, **カテゴリ名**: `Underage, Adult, Senior`""")
+                # (ヘルプは省略)
                 st.write("連続値を任意の範囲で区切り、カテゴリ分けします。")
                 col_to_bin = st.selectbox("対象の列", numeric_cols, key="bin_col")
                 bins_str = st.text_input("区切り値 (カンマ区切り)", "0, 18, 40, 60, 100")
@@ -94,10 +91,8 @@ with st.sidebar:
         else:
             st.warning("数値列がないため、「四則演算」と「ビニング」は使用できません。")
 
-        # --- ここが修正された「条件分岐」機能の完全なコードです ---
         with st.expander("🤔 条件分岐 (IF-THEN-ELSE) 機能"):
-            with st.popover("使い方のヒント 💡"):
-                st.markdown("""**目的**: 条件を満たすかで値を設定します。 **具体例**: `IsAlone` を作る場合\n- **IF**: `FamilySize` `==` `1`\n- **THEN**: `1`\n- **ELSE**: `0`\n- **新しい列名**: `IsAlone`""")
+            # (ヘルプは省略)
             st.write("条件に合致する場合としない場合で値を設定します。")
             if_col = st.selectbox("IF: 対象の列", all_cols, key="if_col")
             if_op = st.selectbox("条件", ["==", "!=", ">", "<", ">=", "<="], key="if_op")
@@ -106,8 +101,19 @@ with st.sidebar:
             else_val = st.text_input("ELSE: 設定する値", "0", key="if_else")
             new_col_name_if = st.text_input("新しい列名", "conditional_result", key="if_new_col")
             if st.button("条件分岐実行", key="if_run"):
+                # --- ここが修正されたブロックです ---
                 try:
-                    try: if_val_eval = eval(if_val)
-                    except: if_val_eval = f"'{if_val}'"
+                    try:
+                        if_val_eval = eval(if_val)
+                    except:
+                        if_val_eval = f"'{if_val}'"
+                    
                     condition = f"df['{if_col}'] {if_op} {if_val_eval}"
                     df[new_col_name_if] = np.where(pd.eval(condition), then_val, else_val)
+                    st.session_state.generated_code.append(f"df['{new_col_name_if}'] = np.where({condition}, '{then_val}', '{else_val}')")
+                    st.success(f"列 '{new_col_name_if}' を作成しました。")
+                except Exception as e: 
+                    st.error(f"条件分岐エラー: {e}")
+
+        if object_cols:
+            with st.
