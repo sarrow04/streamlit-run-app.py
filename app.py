@@ -6,6 +6,8 @@ import plotly.express as px
 import seaborn as sns
 import matplotlib.pyplot as plt
 from scipy import stats
+# --- 修正点1: スケーリングに必要なライブラリをインポート ---
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 # --- ページ設定 ---
 st.set_page_config(
@@ -19,6 +21,8 @@ st.set_page_config(
 def load_csv(uploaded_file):
     """アップロードされたCSVをDataFrameとして読み込む"""
     try:
+        # アップロードされたファイルをリセットして先頭から読み込む
+        uploaded_file.seek(0)
         df = pd.read_csv(uploaded_file)
         return df
     except Exception as e:
@@ -38,7 +42,6 @@ def cramers_v(contingency_table):
     phi2_corr = max(0, phi2 - ((k-1)*(r-1))/(n-1))
     r_corr = r - ((r-1)**2)/(n-1)
     k_corr = k - ((k-1)**2)/(n-1)
-    # 0除算を回避
     if min((k_corr-1), (r_corr-1)) == 0:
         return 0
     return np.sqrt(phi2_corr / min((k_corr-1), (r_corr-1)))
@@ -77,12 +80,13 @@ with st.sidebar:
     uploaded_file = st.file_uploader("1. CSVファイルをアップロード", type=["csv"])
 
     if uploaded_file is not None:
-        if st.session_state.df_original is None:
-            df = load_csv(uploaded_file)
-            if df is not None:
-                st.session_state.df_original = df.copy()
-                st.session_state.df_processed = df.copy()
-                st.success("ファイルを読み込みました。")
+        # ファイルがアップロードされたら常に読み込み直す
+        df = load_csv(uploaded_file)
+        if df is not None and (st.session_state.df_original is None or not df.equals(st.session_state.df_original)):
+            st.session_state.df_original = df.copy()
+            st.session_state.df_processed = df.copy()
+            st.session_state.generated_code = [] # 新しいファイルが来たらコードもリセット
+            st.success("ファイルを読み込みました。")
 
     if st.session_state.df_processed is not None:
         df = st.session_state.df_processed
@@ -93,10 +97,8 @@ with st.sidebar:
         st.markdown("---")
         st.subheader("2. 特徴量を作成")
 
-        # --- 数値列が存在する場合のみ、関連機能を表示 ---
         if numeric_cols:
             with st.expander("🔢 四則演算機能"):
-                # (ヘルプは簡潔に)
                 with st.popover("ヒント💡"): st.markdown("**具体例**: `FamilySize` を作る\n- **列1**: `sibsp` `+` **列2**: `parch` `+` **定数**: `1`")
                 col1 = st.selectbox("列1", numeric_cols, key="calc_col1")
                 op = st.selectbox("演算子", ["+", "-", "*", "/"], key="calc_op")
@@ -107,7 +109,7 @@ with st.sidebar:
                     try:
                         expr = f"df['{col1}'] {op} df['{col2}'] + {const}"
                         df[new_col_name_calc] = pd.eval(expr)
-                        st.session_state.generated_code.append(f"df['{new_col_name_calc}'] = {expr}")
+                        st.session_state.generated_code.append(f"df['{new_col_name_calc}'] = df['{col1}'] {op} df['{col2}'] + {const}")
                         st.success(f"列 '{new_col_name_calc}' を作成しました。")
                     except Exception as e: st.error(f"計算エラー: {e}")
 
@@ -126,14 +128,31 @@ with st.sidebar:
                         st.success(f"列 '{new_col_name_bin}' を作成しました。")
                     except Exception as e: st.error(f"ビニングエラー: {e}")
             
+            # --- 修正点2: スケーリング機能のロジックを実装 ---
             with st.expander("↔️ スケーリング（正規化・標準化）"):
                 with st.popover("ヒント💡"): st.markdown("**正規化**: データを0〜1の範囲に変換します。\n**標準化**: データを平均0, 標準偏差1の分布に変換します。")
                 col_to_scale = st.selectbox("対象の列", numeric_cols, key="scale_col")
                 method = st.radio("スケーリング方法を選択", ["正規化 (Min-Max)", "標準化 (Standard)"], key="scale_method")
                 new_col_name_scale = st.text_input("新しい列名", f"{col_to_scale}_scaled", key="scale_new_col")
                 if st.button("スケーリング実行", key="scale_run"):
-                    # (実行ロジックは前の回答と同様)
-                    pass
+                    try:
+                        df_processed = st.session_state.df_processed
+                        col_data = df_processed[[col_to_scale]]
+                        
+                        if method == "正規化 (Min-Max)":
+                            scaler = MinMaxScaler()
+                            scaled_data = scaler.fit_transform(col_data)
+                            code_line = f"from sklearn.preprocessing import MinMaxScaler\nscaler = MinMaxScaler()\ndf['{new_col_name_scale}'] = scaler.fit_transform(df[['{col_to_scale}']])"
+                        else: # "標準化 (Standard)"
+                            scaler = StandardScaler()
+                            scaled_data = scaler.fit_transform(col_data)
+                            code_line = f"from sklearn.preprocessing import StandardScaler\nscaler = StandardScaler()\ndf['{new_col_name_scale}'] = scaler.fit_transform(df[['{col_to_scale}']])"
+                            
+                        df_processed[new_col_name_scale] = scaled_data
+                        st.session_state.generated_code.append(code_line)
+                        st.success(f"列 '{new_col_name_scale}' を作成しました。")
+                    except Exception as e:
+                        st.error(f"スケーリングエラー: {e}")
 
         else:
             st.warning("数値列がないため、「四則演算」「ビニング」「スケーリング」は使用できません。")
@@ -148,6 +167,7 @@ with st.sidebar:
             new_col_name_if = st.text_input("新しい列名", "conditional_result", key="if_new_col")
             if st.button("条件分岐実行", key="if_run"):
                 try:
+                    # 入力値を数値か文字列か自動で判定
                     try: if_val_eval = eval(if_val)
                     except: if_val_eval = f"'{if_val}'"
                     condition = f"df['{if_col}'] {if_op} {if_val_eval}"
@@ -183,11 +203,31 @@ if st.session_state.df_processed is not None:
     st.subheader("✨ 加工後のデータフレーム")
     st.dataframe(df_display)
 
+    # --- 修正点3: 出力関連の機能をデータフレームのすぐ下に配置 ---
+    st.markdown("---")
+    st.header("📤 出力")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+           label="加工後のCSVをダウンロード",
+           data=convert_df_to_csv(df_display),
+           file_name='featured_data.csv',
+           mime='text/csv',
+           use_container_width=True
+        )
+    
+    if st.session_state.generated_code:
+        with st.expander("🐍 生成されたPythonコードを見る"):
+            st.info("以下のコードで、今回の操作を再現できます。")
+            full_code = "\n\n".join(st.session_state.generated_code)
+            st.code(full_code, language='python')
+    
     st.markdown("---")
     with st.expander("📊 カラムごとの簡易分析"):
         if not df_display.columns.empty:
             selected_column = st.selectbox("分析したいカラムを選択してください", df_display.columns, key="dist_select")
             if selected_column:
+                # (簡易分析のロジックは変更なし)
                 st.subheader(f"基本統計量: `{selected_column}`")
                 st.dataframe(df_display[selected_column].describe())
                 st.subheader(f"分布の可視化: `{selected_column}`")
@@ -205,6 +245,7 @@ if st.session_state.df_processed is not None:
     st.header("🔗 相関分析")
     tab1, tab2, tab3 = st.tabs(["数値 vs 数値 (相関係数)", "カテゴリ vs カテゴリ (クラメールV)", "数値 vs カテゴリ (相関比)"])
 
+    # (相関分析のタブ内ロジックは変更なし)
     with tab1:
         st.subheader("相関係数ヒートマップ")
         numeric_cols_df = df_display.select_dtypes(include=np.number)
@@ -236,7 +277,7 @@ if st.session_state.df_processed is not None:
         numeric_cols_list_cr = df_display.select_dtypes(include=np.number).columns.tolist()
         object_cols_list_cr = df_display.select_dtypes(include=['object', 'category']).columns.tolist()
         if numeric_cols_list_cr and object_cols_list_cr:
-            selected_cat_col = st.selectbox("基準となるカテゴリ列を選択", object_cols_list_cr)
+            selected_cat_col = st.selectbox("基準となるカテゴリ列を選択", object_cols_list_cr, key="cr_cat_select")
             if selected_cat_col:
                 corr_ratios = {num_col: correlation_ratio(df_display[selected_cat_col], df_display[num_col]) for num_col in numeric_cols_list_cr}
                 corr_ratio_df = pd.DataFrame(list(corr_ratios.items()), columns=['数値列', '相関比']).sort_values(by='相関比', ascending=False)
@@ -245,18 +286,5 @@ if st.session_state.df_processed is not None:
         else:
             st.warning("相関比を計算するには、少なくとも1つずつの数値列とカテゴリ列が必要です。")
 
-    st.markdown("---")
-    st.download_button(
-       label="加工後のCSVをダウンロード",
-       data=convert_df_to_csv(df_display),
-       file_name='featured_data.csv',
-       mime='text/csv',
-    )
-    
-    if st.session_state.generated_code:
-        st.subheader("🐍 生成されたPythonコード")
-        st.info("以下のコードで、今回の操作を再現できます。")
-        full_code = "\n\n".join(st.session_state.generated_code)
-        st.code(full_code, language='python')
 else:
     st.info("サイドバーからCSVファイルをアップロードして開始してください。")
