@@ -119,14 +119,11 @@ with st.sidebar:
         all_cols = df.columns.tolist()
 
         st.markdown("---")
-        st.subheader("2. 特徴量を作成")
+        st.subheader("2. 特徴量を作成・分析")
 
-        # --- ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-        # --- ここから、省略されていた各機能のロジックをすべて実装 ---
-        # --- ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-        
         if numeric_cols:
             with st.expander("🔢 四則演算機能"):
+                # ... (変更なし)
                 with st.popover("ヒント💡"): st.markdown("**例**: `sibsp` + `parch` + `1` => `FamilySize`")
                 col1 = st.selectbox("列1", numeric_cols, key="calc_col1")
                 op = st.selectbox("演算子", ["+", "-", "*", "/"], key="calc_op")
@@ -141,8 +138,8 @@ with st.sidebar:
                         st.success(f"列 '{new_col_name_calc}' を作成しました。")
                         st.rerun()
                     except Exception as e: st.error(f"計算エラー: {e}")
-
             with st.expander("📊 ビニング（カテゴリ化）機能"):
+                # ... (変更なし)
                 with st.popover("ヒント💡"): st.markdown("**例**: `age` を `0,18,60,100` で区切り `Child,Adult,Senior` に")
                 col_to_bin = st.selectbox("対象の列", numeric_cols, key="bin_col")
                 bins_str = st.text_input("区切り値 (カンマ区切り)", "0, 18, 60, 100")
@@ -157,8 +154,8 @@ with st.sidebar:
                         st.success(f"列 '{new_col_name_bin}' を作成しました。")
                         st.rerun()
                     except Exception as e: st.error(f"ビニングエラー: {e}")
-            
             with st.expander("↔️ スケーリング"):
+                # ... (変更なし)
                 with st.popover("ヒント💡"): st.markdown("**正規化**: 0〜1の範囲に変換\n**標準化**: 平均0, 標準偏差1に変換")
                 col_to_scale = st.selectbox("対象の列", numeric_cols, key="scale_col")
                 method = st.radio("方法", ["正規化 (Min-Max)", "標準化 (Standard)"], key="scale_method")
@@ -179,6 +176,7 @@ with st.sidebar:
             st.warning("数値列がないため、一部機能は使用できません。")
 
         with st.expander("🤔 条件分岐 (IF-THEN-ELSE) 機能"):
+            # ... (変更なし)
             with st.popover("ヒント💡"): st.markdown("**例**: IF `FamilySize` `==` `1` THEN `1` ELSE `0` => `IsAlone`")
             if_col = st.selectbox("IF: 対象の列", all_cols, key="if_col")
             if_op = st.selectbox("条件", ["==", "!=", ">", "<", ">=", "<="], key="if_op")
@@ -199,6 +197,7 @@ with st.sidebar:
 
         if object_cols:
             with st.expander("✍️ テキスト処理 (正規表現)"):
+                # ... (変更なし)
                 with st.popover("ヒント💡"): st.markdown(r"**例**: `name` から `([A-Za-z]+)\.` で敬称を抽出 => `Title`")
                 text_col = st.selectbox("対象の列", object_cols, key="re_col")
                 regex_pattern = st.text_input("正規表現パターン", r'([A-Za-z]+)\.', key="re_pattern")
@@ -210,13 +209,24 @@ with st.sidebar:
                         st.success(f"列 '{new_col_name_re}' を作成しました。")
                         st.rerun()
                     except Exception as e: st.error(f"抽出エラー: {e}")
-        else:
-            st.warning("テキスト列がないため、「テキスト処理」は使用できません。")
+            
+            # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+            # --- ここからが追加した機能 ---
+            # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+            with st.expander("📊 文字の出現数を確認 (頻度分析)"):
+                with st.popover("ヒント💡"): st.markdown("カテゴリカルな列（文字の列）で、どの値が何回出現するかを確認します。")
+                freq_col = st.selectbox("対象の列", object_cols, key="freq_col")
+                # この機能はメインエリアに結果を表示するため、ボタンは不要
+                st.session_state.freq_col_selected = freq_col # 選択された列をセッションステートに保存
 
+        else:
+            st.warning("テキスト列がないため、「テキスト処理」関連機能は使用できません。")
+        
         st.markdown("---")
         if st.button("🔄 変更をリセット"):
             st.session_state.df_processed = st.session_state.df_original.copy()
             st.session_state.generated_code = []
+            st.session_state.freq_col_selected = None # リセット時に選択も解除
             gc.collect()
             st.rerun()
 
@@ -228,6 +238,7 @@ if st.session_state.df_processed is not None:
 
     st.markdown("---")
     st.header("📤 出力")
+    # ... (ダウンロードとコード表示部分は変更なし)
     st.download_button(
        label="加工後のCSVをダウンロード",
        data=convert_df_to_csv(df_display),
@@ -240,9 +251,40 @@ if st.session_state.df_processed is not None:
             st.info("以下のコードで、今回の操作を再現できます。")
             full_code = "\n\n".join(st.session_state.generated_code)
             st.code(full_code, language='python')
-    
+
+    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    # --- ここからが追加した機能の表示エリア ---
+    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    if 'freq_col_selected' in st.session_state and st.session_state.freq_col_selected:
+        selected_freq_col = st.session_state.freq_col_selected
+        st.markdown("---")
+        st.header(f"🔍 「{selected_freq_col}」の出現数分析")
+
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.write(f"**出現回数 トップ20**")
+            value_counts_df = df_display[selected_freq_col].value_counts().reset_index()
+            value_counts_df.columns = [selected_freq_col, '出現回数']
+            st.dataframe(value_counts_df.head(20))
+
+        with col2:
+            st.write(f"**グラフ表示 トップ20**")
+            top20_df = value_counts_df.head(20)
+            if not top20_df.empty:
+                fig = px.bar(top20_df, 
+                             x='出現回数', 
+                             y=selected_freq_col, 
+                             orientation='h', 
+                             title=f'「{selected_freq_col}」の出現回数トップ20')
+                fig.update_layout(yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("この列にはデータがありません。")
+
     st.markdown("---")
     with st.expander("📊 カラムごとの簡易分析"):
+        # ... (変更なし)
         if not df_display.columns.empty:
             selected_column = st.selectbox("分析したいカラムを選択", df_display.columns)
             if selected_column:
@@ -259,8 +301,8 @@ if st.session_state.df_processed is not None:
     
     st.markdown("---")
     st.header("🔗 相関分析")
+    # ... (相関分析部分は変更なし)
     tab1, tab2, tab3 = st.tabs(["数値 vs 数値", "カテゴリ vs カテゴリ", "数値 vs カテゴリ"])
-
     with tab1:
         st.subheader("相関係数ヒートマップ")
         numeric_cols_df = df_display.select_dtypes(include=np.number)
@@ -273,7 +315,6 @@ if st.session_state.df_processed is not None:
                     st.pyplot(fig)
                     plt.close(fig); gc.collect()
         else: st.warning("少なくとも2つ以上の数値列が必要です。")
-            
     with tab2:
         st.subheader("クラメールの連関係数")
         cat_cols_list = df_display.select_dtypes(include=['object', 'category']).columns.tolist()
@@ -291,7 +332,6 @@ if st.session_state.df_processed is not None:
                         st.metric(f"クラメールの連関係数 (V)", f"{v:.4f}")
                         st.dataframe(contingency_table)
         else: st.warning("少なくとも2つ以上のカテゴリ列が必要です。")
-
     with tab3:
         st.subheader("相関比")
         numeric_cols_cr = df_display.select_dtypes(include=np.number).columns.tolist()
@@ -305,6 +345,6 @@ if st.session_state.df_processed is not None:
                     fig = px.bar(corr_ratio_df, x='相関比', y='数値列', orientation='h', title=f"「{selected_cat_col}」と各数値列の相関比")
                     st.plotly_chart(fig, use_container_width=True)
         else: st.warning("少なくとも1つずつの数値列とカテゴリ列が必要です。")
-
 else:
     st.info("サイドバーからCSVファイルをアップロードし、「データ読み込み実行」ボタンを押して開始してください。")
+
