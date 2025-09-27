@@ -17,6 +17,7 @@ st.set_page_config(
 )
 
 # --- 関数 ---
+# (reduce_mem_usage, load_csv, convert_df_to_csv, cramers_v, correlation_ratio は変更なし)
 def reduce_mem_usage(df):
     """DataFrameのメモリ使用量を削減する"""
     start_mem = df.memory_usage().sum() / 1024**2
@@ -91,6 +92,7 @@ if 'df_processed' not in st.session_state:
     st.session_state.df_processed = None
     st.session_state.df_original = None
     st.session_state.generated_code = []
+    st.session_state.freq_col_selected = None
 
 # --- メイン画面 ---
 st.title("🔧 特徴量エンジニアリング支援アプリ")
@@ -109,6 +111,7 @@ with st.sidebar:
                     st.session_state.df_original = df.copy()
                     st.session_state.df_processed = df.copy()
                     st.session_state.generated_code = []
+                    st.session_state.freq_col_selected = None
                     st.success("ファイルの読み込みが完了しました。")
                     st.rerun()
 
@@ -176,24 +179,65 @@ with st.sidebar:
             st.warning("数値列がないため、一部機能は使用できません。")
 
         with st.expander("🤔 条件分岐 (IF-THEN-ELSE) 機能"):
-            # ... (変更なし)
             with st.popover("ヒント💡"): st.markdown("**例**: IF `FamilySize` `==` `1` THEN `1` ELSE `0` => `IsAlone`")
             if_col = st.selectbox("IF: 対象の列", all_cols, key="if_col")
-            if_op = st.selectbox("条件", ["==", "!=", ">", "<", ">=", "<="], key="if_op")
-            if_val = st.text_input("値", "1", key="if_val")
+            if_op = st.selectbox("条件", ["==", "!=", ">", "<", ">=", "<=", "in", "not in", "str.contains"], key="if_op")
+            if_val_input = st.text_input("値", "1", key="if_val")
             then_val = st.text_input("THEN: 設定する値", "1", key="if_then")
             else_val = st.text_input("ELSE: 設定する値", "0", key="if_else")
             new_col_name_if = st.text_input("新しい列名", "conditional_result", key="if_new_col")
+            
             if st.button("条件分岐実行", key="if_run"):
                 try:
-                    try: if_val_eval = eval(if_val)
-                    except: if_val_eval = f"'{if_val}'"
-                    condition = f"df['{if_col}'] {if_op} {if_val_eval}"
-                    df[new_col_name_if] = np.where(pd.eval(condition), then_val, else_val)
-                    st.session_state.generated_code.append(f"df['{new_col_name_if}'] = np.where({condition}, '{then_val}', '{else_val}')")
+                    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+                    # --- ここからが修正箇所 ---
+                    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+                    target_series = df[if_col]
+                    
+                    # 比較する値の型を、対象の列の型に合わせて自動で変換
+                    if pd.api.types.is_numeric_dtype(target_series.dtype) and if_op not in ["in", "not in"]:
+                        try:
+                            if_val = float(if_val_input) # 数値に変換
+                        except ValueError:
+                            st.error(f"エラー: 「{if_col}」は数値列です。比較する値には数値を入力してください。")
+                            st.stop()
+                    else:
+                        if_val = if_val_input # 文字列として扱う
+
+                    # 条件式を動的に生成
+                    if if_op == "==": condition = (target_series == if_val)
+                    elif if_op == "!=": condition = (target_series != if_val)
+                    elif if_op == ">": condition = (target_series > if_val)
+                    elif if_op == "<": condition = (target_series < if_val)
+                    elif if_op == ">=": condition = (target_series >= if_val)
+                    elif if_op == "<=": condition = (target_series <= if_val)
+                    elif if_op in ["in", "not in"]:
+                        # in/not in の場合は、カンマ区切りのリストとして解釈
+                        val_list = [v.strip() for v in if_val.split(',')]
+                        condition = target_series.isin(val_list)
+                        if if_op == "not in":
+                            condition = ~condition # 条件を反転
+                    elif if_op == "str.contains":
+                        condition = target_series.str.contains(if_val, na=False)
+                    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+                    
+                    df[new_col_name_if] = np.where(condition, then_val, else_val)
+                    
+                    # 生成コードも改善
+                    generated_code_line = f"df['{new_col_name_if}'] = np.where(df['{if_col}'] {if_op} {repr(if_val)}, '{then_val}', '{else_val}')"
+                    if if_op == "str.contains":
+                        generated_code_line = f"df['{new_col_name_if}'] = np.where(df['{if_col}'].str.contains({repr(if_val)}, na=False), '{then_val}', '{else_val}')"
+                    elif if_op in ["in", "not in"]:
+                        val_list = [v.strip() for v in if_val.split(',')]
+                        op_str = ".isin" if if_op == "in" else ".isin" # isinでコード生成し、コメントでnotを補足
+                        prefix = "" if if_op == "in" else "~"
+                        generated_code_line = f"df['{new_col_name_if}'] = np.where({prefix}df['{if_col}']{op_str}({val_list}), '{then_val}', '{else_val}')"
+
+                    st.session_state.generated_code.append(generated_code_line)
                     st.success(f"列 '{new_col_name_if}' を作成しました。")
                     st.rerun()
-                except Exception as e: st.error(f"条件分岐エラー: {e}")
+                except Exception as e:
+                    st.error(f"条件分岐エラー: {e}")
 
         if object_cols:
             with st.expander("✍️ テキスト処理 (正規表現)"):
@@ -209,16 +253,11 @@ with st.sidebar:
                         st.success(f"列 '{new_col_name_re}' を作成しました。")
                         st.rerun()
                     except Exception as e: st.error(f"抽出エラー: {e}")
-            
-            # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-            # --- ここからが追加した機能 ---
-            # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
             with st.expander("📊 文字の出現数を確認 (頻度分析)"):
+                # ... (変更なし)
                 with st.popover("ヒント💡"): st.markdown("カテゴリカルな列（文字の列）で、どの値が何回出現するかを確認します。")
                 freq_col = st.selectbox("対象の列", object_cols, key="freq_col")
-                # この機能はメインエリアに結果を表示するため、ボタンは不要
-                st.session_state.freq_col_selected = freq_col # 選択された列をセッションステートに保存
-
+                st.session_state.freq_col_selected = freq_col
         else:
             st.warning("テキスト列がないため、「テキスト処理」関連機能は使用できません。")
         
@@ -226,7 +265,7 @@ with st.sidebar:
         if st.button("🔄 変更をリセット"):
             st.session_state.df_processed = st.session_state.df_original.copy()
             st.session_state.generated_code = []
-            st.session_state.freq_col_selected = None # リセット時に選択も解除
+            st.session_state.freq_col_selected = None
             gc.collect()
             st.rerun()
 
@@ -252,10 +291,8 @@ if st.session_state.df_processed is not None:
             full_code = "\n\n".join(st.session_state.generated_code)
             st.code(full_code, language='python')
 
-    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    # --- ここからが追加した機能の表示エリア ---
-    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
     if 'freq_col_selected' in st.session_state and st.session_state.freq_col_selected:
+        # ... (変更なし)
         selected_freq_col = st.session_state.freq_col_selected
         st.markdown("---")
         st.header(f"🔍 「{selected_freq_col}」の出現数分析")
@@ -347,4 +384,3 @@ if st.session_state.df_processed is not None:
         else: st.warning("少なくとも1つずつの数値列とカテゴリ列が必要です。")
 else:
     st.info("サイドバーからCSVファイルをアップロードし、「データ読み込み実行」ボタンを押して開始してください。")
-
