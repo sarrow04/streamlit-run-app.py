@@ -152,8 +152,11 @@ with st.sidebar:
                     try:
                         bins = [float(b.strip()) for b in bins_str.split(',')]
                         labels = [l.strip() for l in labels_str.split(',')]
-                        df[new_col_name_bin] = pd.cut(df[col_to_bin], bins=bins, labels=labels, right=False)
-                        st.session_state.generated_code.append(f"bins = {bins}\nlabels = {labels}\ndf['{new_col_name_bin}'] = pd.cut(df['{col_to_bin}'], bins=bins, labels=labels, right=False)")
+                        if len(bins) != len(labels) + 1:
+                            st.error(f"エラー: 区切り値の数({len(bins)})は、カテゴリ名の数({len(labels)})より1つ多くなければなりません。")
+                            st.stop()
+                        df[new_col_name_bin] = pd.cut(df[col_to_bin], bins=bins, labels=labels, right=False, include_lowest=True)
+                        st.session_state.generated_code.append(f"bins = {bins}\nlabels = {labels}\ndf['{new_col_name_bin}'] = pd.cut(df['{col_to_bin}'], bins=bins, labels=labels, right=False, include_lowest=True)")
                         st.success(f"列 '{new_col_name_bin}' を作成しました。")
                         st.rerun()
                     except Exception as e: st.error(f"ビニングエラー: {e}")
@@ -178,66 +181,118 @@ with st.sidebar:
         else:
             st.warning("数値列がないため、一部機能は使用できません。")
 
-        with st.expander("🤔 条件分岐 (IF-THEN-ELSE) 機能"):
+        # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+        # --- ここからが修正箇所 ---
+        # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+        with st.expander("🤔 条件分岐 (IF-THEN-ELSE) 機能", expanded=True):
             with st.popover("ヒント💡"): st.markdown("**例**: IF `FamilySize` `==` `1` THEN `1` ELSE `0` => `IsAlone`")
             if_col = st.selectbox("IF: 対象の列", all_cols, key="if_col")
-            if_op = st.selectbox("条件", ["==", "!=", ">", "<", ">=", "<=", "in", "not in", "str.contains"], key="if_op")
+            
+            # 対象列のデータ型に応じて、利用可能な演算子を変更
+            target_series = df[if_col]
+            if pd.api.types.is_numeric_dtype(target_series.dtype):
+                available_ops = ["==", "!=", ">", "<", ">=", "<=", "in", "not in"]
+            else: # object型やcategory型
+                available_ops = ["==", "!=", "in", "not in", "str.contains"]
+            
+            if_op = st.selectbox("条件", available_ops, key="if_op")
+
             if_val_input = st.text_input("値", "1", key="if_val")
-            then_val = st.text_input("THEN: 設定する値", "1", key="if_then")
-            else_val = st.text_input("ELSE: 設定する値", "0", key="if_else")
+            then_val_input = st.text_input("THEN: 設定する値", "1", key="if_then")
+            else_val_input = st.text_input("ELSE: 設定する値", "0", key="if_else")
             new_col_name_if = st.text_input("新しい列名", "conditional_result", key="if_new_col")
             
             if st.button("条件分岐実行", key="if_run"):
                 try:
-                    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-                    # --- ここからが修正箇所 ---
-                    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-                    target_series = df[if_col]
-                    
-                    # 比較する値の型を、対象の列の型に合わせて自動で変換
-                    if pd.api.types.is_numeric_dtype(target_series.dtype) and if_op not in ["in", "not in"]:
-                        try:
-                            if_val = float(if_val_input) # 数値に変換
-                        except ValueError:
-                            st.error(f"エラー: 「{if_col}」は数値列です。比較する値には数値を入力してください。")
-                            st.stop()
-                    else:
-                        if_val = if_val_input # 文字列として扱う
-
-                    # 条件式を動的に生成
-                    if if_op == "==": condition = (target_series == if_val)
-                    elif if_op == "!=": condition = (target_series != if_val)
-                    elif if_op == ">": condition = (target_series > if_val)
-                    elif if_op == "<": condition = (target_series < if_val)
-                    elif if_op == ">=": condition = (target_series >= if_val)
-                    elif if_op == "<=": condition = (target_series <= if_val)
-                    elif if_op in ["in", "not in"]:
-                        # in/not in の場合は、カンマ区切りのリストとして解釈
-                        val_list = [v.strip() for v in if_val.split(',')]
+                    # --- 条件式の構築 ---
+                    condition = None
+                    # 比較値(if_val)の型を動的に解釈
+                    if if_op in ["in", "not in"]:
+                        val_list_str = [v.strip() for v in if_val_input.split(',')]
+                        # 対象列が数値型なら、リストの中身も数値に変換しようと試みる
+                        if pd.api.types.is_numeric_dtype(target_series.dtype):
+                            try:
+                                val_list = [float(v) for v in val_list_str]
+                            except ValueError:
+                                st.error("エラー: 数値列と比較するため、in/not in の値はカンマ区切りの数値にしてください。")
+                                st.stop()
+                        else:
+                            val_list = val_list_str
+                        
                         condition = target_series.isin(val_list)
                         if if_op == "not in":
-                            condition = ~condition # 条件を反転
+                            condition = ~condition
+                        
+                        # コード生成用の値
+                        repr_if_val = val_list
+
                     elif if_op == "str.contains":
-                        condition = target_series.str.contains(if_val, na=False)
-                    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+                        if not pd.api.types.is_string_dtype(target_series.dtype):
+                            st.error(f"エラー: 'str.contains'は文字列の列にのみ使用できます。'{if_col}'は違います。")
+                            st.stop()
+                        condition = target_series.str.contains(if_val_input, na=False)
+                        repr_if_val = repr(if_val_input) # `repr()`でクォートを付与
+
+                    else: # ==, !=, >, <, >=, <=
+                        # 対象列が数値型なら、比較値も数値に変換
+                        if pd.api.types.is_numeric_dtype(target_series.dtype):
+                            try:
+                                if_val = float(if_val_input)
+                            except ValueError:
+                                st.error(f"エラー: '{if_col}'は数値列です。比較値には数値を入力してください。")
+                                st.stop()
+                        else: # 文字列型として比較
+                            if_val = if_val_input
+                        
+                        # 演算子に応じて条件を評価
+                        if if_op == "==": condition = (target_series == if_val)
+                        elif if_op == "!=": condition = (target_series != if_val)
+                        elif if_op == ">": condition = (target_series > if_val)
+                        elif if_op == "<": condition = (target_series < if_val)
+                        elif if_op == ">=": condition = (target_series >= if_val)
+                        elif if_op == "<=": condition = (target_series <= if_val)
+
+                        repr_if_val = repr(if_val) if isinstance(if_val, str) else if_val
+
+                    # --- THEN/ELSE値の型解釈 ---
+                    # ユーザー入力を元に、数値に変換できそうなら数値として扱う
+                    try:
+                        then_val = float(then_val_input)
+                    except ValueError:
+                        then_val = then_val_input
+                    try:
+                        else_val = float(else_val_input)
+                    except ValueError:
+                        else_val = else_val_input
                     
+                    # --- 新しい列の作成 ---
                     df[new_col_name_if] = np.where(condition, then_val, else_val)
                     
-                    # 生成コードも改善
-                    generated_code_line = f"df['{new_col_name_if}'] = np.where(df['{if_col}'] {if_op} {repr(if_val)}, '{then_val}', '{else_val}')"
-                    if if_op == "str.contains":
-                        generated_code_line = f"df['{new_col_name_if}'] = np.where(df['{if_col}'].str.contains({repr(if_val)}, na=False), '{then_val}', '{else_val}')"
-                    elif if_op in ["in", "not in"]:
-                        val_list = [v.strip() for v in if_val.split(',')]
-                        op_str = ".isin" if if_op == "in" else ".isin" # isinでコード生成し、コメントでnotを補足
+                    # --- 生成コードの作成 ---
+                    # then/elseの値をコード用に整形 (文字列ならクォートを付ける)
+                    repr_then_val = repr(then_val) if isinstance(then_val, str) else then_val
+                    repr_else_val = repr(else_val) if isinstance(else_val, str) else else_val
+                    
+                    # 条件部分のコードを整形
+                    if if_op in ["in", "not in"]:
                         prefix = "" if if_op == "in" else "~"
-                        generated_code_line = f"df['{new_col_name_if}'] = np.where({prefix}df['{if_col}']{op_str}({val_list}), '{then_val}', '{else_val}')"
+                        condition_code = f"{prefix}df['{if_col}'].isin({repr_if_val})"
+                    else:
+                        condition_code = f"df['{if_col}'] {if_op} {repr_if_val}"
+                        if if_op == "str.contains":
+                             condition_code = f"df['{if_col}'].str.contains({repr_if_val}, na=False)"
+                    
+                    generated_code_line = f"df['{new_col_name_if}'] = np.where({condition_code}, {repr_then_val}, {repr_else_val})"
 
                     st.session_state.generated_code.append(generated_code_line)
                     st.success(f"列 '{new_col_name_if}' を作成しました。")
                     st.rerun()
+
                 except Exception as e:
                     st.error(f"条件分岐エラー: {e}")
+        # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+        # --- 修正箇所ここまで ---
+        # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 
         if object_cols:
             with st.expander("✍️ テキスト処理 (正規表現)"):
@@ -262,7 +317,7 @@ with st.sidebar:
             st.warning("テキスト列がないため、「テキスト処理」関連機能は使用できません。")
         
         st.markdown("---")
-        if st.button("🔄 変更をリセット"):
+        if st.button("🔄 変更をリセット", use_container_width=True):
             st.session_state.df_processed = st.session_state.df_original.copy()
             st.session_state.generated_code = []
             st.session_state.freq_col_selected = None
@@ -288,7 +343,7 @@ if st.session_state.df_processed is not None:
     if st.session_state.generated_code:
         with st.expander("🐍 生成されたPythonコードを見る"):
             st.info("以下のコードで、今回の操作を再現できます。")
-            full_code = "\n\n".join(st.session_state.generated_code)
+            full_code = "import numpy as np\n" + "\n\n".join(st.session_state.generated_code)
             st.code(full_code, language='python')
 
     if 'freq_col_selected' in st.session_state and st.session_state.freq_col_selected:
@@ -333,7 +388,9 @@ if st.session_state.df_processed is not None:
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.info("カテゴリ変数のため、各値の出現回数を表示します。")
-                    fig = px.bar(df_display[selected_column].value_counts())
+                    value_counts = df_display[selected_column].value_counts().head(20) # 上位20件に絞る
+                    fig = px.bar(value_counts, y=value_counts.index, x=value_counts.values, orientation='h')
+                    fig.update_layout(yaxis_title=selected_column, xaxis_title="出現回数", yaxis={'categoryorder':'total ascending'})
                     st.plotly_chart(fig, use_container_width=True)
     
     st.markdown("---")
@@ -344,7 +401,7 @@ if st.session_state.df_processed is not None:
         st.subheader("相関係数ヒートマップ")
         numeric_cols_df = df_display.select_dtypes(include=np.number)
         if len(numeric_cols_df.columns) > 1:
-            if st.button("ヒートマップを計算", key="corr_heatmap_btn"):
+            if st.button("ヒートマップを計算", key="corr_heatmap_btn", use_container_width=True):
                 with st.spinner("計算中..."):
                     corr_matrix = numeric_cols_df.corr(numeric_only=True)
                     fig, ax = plt.subplots(figsize=(10, 8))
@@ -359,7 +416,7 @@ if st.session_state.df_processed is not None:
             col1, col2 = st.columns(2)
             col1_select = col1.selectbox("列 1", cat_cols_list, key="cramers_col1")
             col2_select = col2.selectbox("列 2", cat_cols_list, index=min(1, len(cat_cols_list)-1), key="cramers_col2")
-            if st.button("クラメールVを計算", key="cramers_run_btn"):
+            if st.button("クラメールVを計算", key="cramers_run_btn", use_container_width=True):
                 if col1_select == col2_select:
                     st.warning("異なる列を選んでください。")
                 else:
@@ -375,7 +432,7 @@ if st.session_state.df_processed is not None:
         cat_cols_cr = df_display.select_dtypes(include=['object', 'category']).columns.tolist()
         if numeric_cols_cr and cat_cols_cr:
             selected_cat_col = st.selectbox("基準となるカテゴリ列", cat_cols_cr)
-            if st.button("相関比を計算", key="corr_ratio_btn"):
+            if st.button("相関比を計算", key="corr_ratio_btn", use_container_width=True):
                 with st.spinner("計算中..."):
                     corr_ratios = {num_col: correlation_ratio(df_display[selected_cat_col], df_display[num_col]) for num_col in numeric_cols_cr}
                     corr_ratio_df = pd.DataFrame(list(corr_ratios.items()), columns=['数値列', '相関比']).sort_values('相関比', ascending=False)
@@ -384,3 +441,4 @@ if st.session_state.df_processed is not None:
         else: st.warning("少なくとも1つずつの数値列とカテゴリ列が必要です。")
 else:
     st.info("サイドバーからCSVファイルをアップロードし、「データ読み込み実行」ボタンを押して開始してください。")
+
